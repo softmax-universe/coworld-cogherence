@@ -14,7 +14,7 @@ const ACTION_RULES = `YOUR ACTIONS each turn (as JSON):
 - transfer {to, mineral, amount}: send minerals to another Cog (1 energy). Deals are non-binding.
 - bid: a sealed second-price heart bid, in energy. Only Cogs holding ground can bid. The highest bidder wins and pays the greater of 1 energy or the second-highest bid; tied bids go to the earlier seat in the fixed Cog order. Submitting first does not change ties and earns no energy bonus in this Coworld.
 
-Spend only energy you can afford — an unaffordable order set is rejected wholesale. Think briefly, then return JSON exactly once.`;
+Spend only energy you can afford — an unaffordable order set is rejected wholesale. Return a single JSON object and nothing else.`;
 
 const RULES = `
 

@@ -1,14 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { renderView, renderNegotiate, SYSTEM_PROMPT } from "./render";
+import { renderView, renderNegotiate, renderSystemPrompt, SYSTEM_PROMPT } from "./render";
+import { promptVariants, resolvePromptSelection } from "./prompt-variants";
 import { newGame } from "../../shared/engine/game";
 
 const view = (me = "cog0") => ({ state: newGame(7, 4), me });
 
 describe("renderView", () => {
-  it("system prompt states the goal and the submit tool", () => {
+  it("system prompt states the goal and bare JSON output across all variants", () => {
     expect(SYSTEM_PROMPT).toMatch(/hearts/i);
     expect(SYSTEM_PROMPT).toContain("JSON");
     expect(SYSTEM_PROMPT).toMatch(/align/);
+    for (const variant of promptVariants) {
+      const rendered = renderSystemPrompt(resolvePromptSelection({ promptVariant: variant }));
+      expect(rendered).toContain("Return a single JSON object and nothing else.");
+      expect(rendered).not.toContain("Think briefly");
+    }
   });
   it("user prompt names the cog, the turn, and its treasury", () => {
     const { user } = renderView(view("cog0"));
