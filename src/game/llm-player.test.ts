@@ -20,6 +20,7 @@ afterEach(() => {
 
 async function startDeterministicModelServer(
   handler: (req: { slot: string; messages: Array<{ role: string; content: string }> }) => string,
+  orderStatus = 200,
 ) {
   let calls = 0;
   const server = createServer((req, res) => {
@@ -32,10 +33,15 @@ async function startDeterministicModelServer(
       const parsed = JSON.parse(body);
       const slot = String(req.headers["x-coworld-player-slot"] ?? "");
       const content = handler({ slot, messages: parsed.messages });
-      res.writeHead(200, {
+      const status = parsed.messages[1].content.includes("NEGOTIATION") ? 200 : orderStatus;
+      res.writeHead(status, {
         "content-type": "application/json",
         "X-Softmax-Llm-Call-Id": randomUUID(),
       });
+      if (status !== 200) {
+        res.end(content);
+        return;
+      }
       res.end(
         JSON.stringify({
           model: "deterministic/test",
@@ -109,15 +115,19 @@ describe("published model player & gameplay contracts", () => {
     }
   }, 30_000);
 
-  it("fails explicitly and preserves raw model replies instead of falling back to baseline", async () => {
+  it.each([
+    ["malformed JSON", 'private prose {"bid":1}', 200, "player_error"],
+    ["invalid order schema", '{"bid":"private invalid bid"}', 200, "player_error"],
+    ["unaffordable bid", '{"bid":999999}', 200, "player_error"],
+    ["inference outage", "private provider diagnostics", 503, "episode_inconclusive"],
+  ] as const)("terminates on %s with one order request and private evidence", async (_case, reply, status, kind) => {
     const dir = await mkdtemp(join(tmpdir(), "cogherence-fail-explicit-"));
     vi.stubEnv("COGAME_RESULTS_URI", join(dir, "results.json"));
     vi.stubEnv("COGAME_SAVE_TRAJECTORY_URI", join(dir, "trajectory.jsonl"));
-    const rawBadReply = 'Sure! Here is my move: {"orders":[{"type":"bid","energy":1}]}';
-    const model = await startDeterministicModelServer(({ messages }) => {
-      if (messages[1]!.content.includes("NEGOTIATION")) return '{"messages":[]}';
-      return rawBadReply;
-    });
+    vi.stubEnv("COGAME_PLAYER_FAILURE_URI", join(dir, "player_failure.json"));
+    const modelSlot = 2;
+    const model = await startDeterministicModelServer(({ messages }) =>
+      messages[1]!.content.includes("NEGOTIATION") ? '{"messages":[]}' : reply, status);
     vi.stubEnv("COWORLD_LLM_ENDPOINT", model.url);
     vi.stubEnv("COWORLD_LLM_MODEL", "deterministic/test");
     const host = await runCoworldGame({
@@ -130,38 +140,36 @@ describe("published model player & gameplay contracts", () => {
       },
     });
     try {
-      const players = [
-        runCoworldPlayer({
-          module: cogherenceModule,
-          connect: host.playerUrls[0],
-          decide: makeLlmDecide(),
-          talk: makeLlmTalk(),
-        }),
-        ...host.playerUrls.slice(1).map((connect) =>
-          runCoworldPlayer({
-            module: cogherenceModule,
-            connect,
-            decide: baselineDecide,
-          }),
-        ),
-      ];
-      await expect(host.finished).rejects.toThrow(/failed/i);
-      await host.close();
-      await Promise.allSettled(players);
+      const players = host.playerUrls.map((connect, slot) => runCoworldPlayer({
+        module: cogherenceModule,
+        connect,
+        decide: slot === modelSlot ? makeLlmDecide() : baselineDecide,
+        talk: slot === modelSlot ? makeLlmTalk() : undefined,
+      }));
+      const outcomes = await Promise.allSettled([host.finished, ...players]);
+      for (const outcome of outcomes) {
+        expect(outcome).toMatchObject({ status: "rejected", reason: { name: "PlayerFailureError", kind, seat: modelSlot } });
+      }
+      expect(model.getCalls()).toBe(2); // one negotiation and one order
+      await expect(readFile(join(dir, "results.json"))).rejects.toMatchObject({ code: "ENOENT" });
+      const failure = JSON.parse(await readFile(join(dir, "player_failure.json"), "utf8"));
+      expect(failure).toEqual({ message: expect.any(String), failed_policy_index: modelSlot, kind });
+      expect(failure.message).not.toContain(reply);
       const trajectory = JSON.parse(await readFile(join(dir, "trajectory.jsonl"), "utf8"));
-      expect(trajectory.episode.status).toBe("failed");
-      const failedDecision = trajectory.decisions.find(
-        (d: { action_status: string; seat: string; observation?: { phase?: string } }) =>
-          d.action_status === "failed" && d.seat === "0" && d.observation?.phase !== "talk",
-      );
-      expect(failedDecision).toBeDefined();
-      expect(failedDecision.executed_action).toBeNull();
-      expect(
-        failedDecision.attempts.some(
-          (a: { response: string; rejection_reason: string | null }) =>
-            a.response === rawBadReply && a.rejection_reason !== null,
-        ),
-      ).toBe(true);
+      expect(trajectory.episode).toMatchObject({
+        status: "failed", outcome: { failure }, participant_outcomes: null,
+      });
+      expect(trajectory.episode.outcome).not.toHaveProperty("scores");
+      const failed = trajectory.decisions.at(-1);
+      expect(failed).toMatchObject({
+        seat: String(modelSlot), action_status: "failed", visibility: "private",
+        selected_attempt_id: null, executed_action: null, fallback_origin: null,
+        attempts: [{ response: reply, accepted: false, rejection_reason: expect.any(String) }],
+      });
+      if (_case === "unaffordable bid") {
+        expect(failed.attempts[0].parsed_action).toEqual({ orders: [{ type: "bid", energy: 999999 }] });
+        expect(failed.attempts[0].rejection_reason).toContain("cannot afford");
+      }
     } finally {
       await host.close();
       await model.close();

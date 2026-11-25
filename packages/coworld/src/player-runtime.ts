@@ -12,9 +12,9 @@
 // `decide` produces a Decision the game will validate; this runtime stays
 // game-agnostic and only relays. The game's `GameModule` supplies the baseline
 // via `module.game.baselineDecision`, so a no-LLM player is a one-liner.
-import type { ActAttempt } from "@cogweb/protocol";
+import { GenerationEvidenceError, type ActAttempt } from "@cogweb/protocol";
 import { WebSocket } from "ws";
-import { recordAttemptSnapshot, type GameModule } from "@cogweb/core";
+import { PlayerFailureError, recordAttemptSnapshot, type GameModule } from "@cogweb/core";
 import { writePlayerTraceArtifact, type PlayerTraceRecord } from "./player-artifact";
 import { llmUsageTotals } from "@cogweb/llm";
 import {
@@ -24,6 +24,13 @@ import {
   type TalkLine,
   type WelcomeMessage,
 } from "./protocol";
+
+/** Report a terminal host frame at a player CLI boundary after its trace is sealed. */
+export function handlePlayerExit(error: unknown): void {
+  if (!(error instanceof PlayerFailureError)) throw error;
+  console.error(`Episode failed (${error.kind}, slot ${error.seat})`);
+  process.exitCode = 1;
+}
 
 /** Context handed to a player `decide` (and `talk`) for each observation. */
 export interface PlayerDecideContext<State, Decision, View> {
@@ -107,6 +114,7 @@ export function runCoworldPlayer<State, Decision, View>(
         case "welcome":
           welcome = msg;
           return;
+        case "episode_failed":
         case "final":
           // Emit this player's own Bedrock token cost as a structured log line so
           // it's recoverable from the player log in the episode bundle (the player
@@ -124,17 +132,23 @@ export function runCoworldPlayer<State, Decision, View>(
             .then(() => {
               sealed = true;
               return artifactUri
-                ? writePlayerTraceArtifact(artifactUri, welcome!.slot, trace, msg.scores)
+                ? writePlayerTraceArtifact(
+                    artifactUri, welcome!.slot, trace, msg.type === "final" ? msg.scores : null,
+                  )
                 : Promise.resolve();
             })
             .then(
               () =>
                 ws.send(JSON.stringify({ type: "artifact_complete" }), (error) => {
                   if (error) reject(error);
-                  else resolve(msg.scores);
+                  else if (msg.type === "final") resolve(msg.scores);
+                  else reject(new PlayerFailureError(msg.message, msg.kind, msg.failedSlot));
                   ws.close();
                 }),
-              reject,
+              (error) => {
+                ws.close();
+                reject(error);
+              },
             );
           return;
         case "observation": {
@@ -224,6 +238,7 @@ export function runCoworldPlayer<State, Decision, View>(
                 type: "failure",
                 id: msg.id,
                 error: String(ctx.signal.reason),
+                failureKind: ctx.signal.reason?.name === "TimeoutError" ? "episode_inconclusive" : "player_error",
                 attempts,
                 speechAttempts,
               });
@@ -240,6 +255,7 @@ export function runCoworldPlayer<State, Decision, View>(
                 type: "failure",
                 id: msg.id,
                 error: String(failure),
+                failureKind: failure instanceof GenerationEvidenceError ? failure.failureKind : "player_error",
                 attempts,
                 speechAttempts,
               });

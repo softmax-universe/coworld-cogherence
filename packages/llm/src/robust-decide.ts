@@ -1,16 +1,3 @@
-// The robust decide loop — the shared backbone for BOTH action decisions and
-// message generation. Ask the model for one decision, parse its sampled JSON text, then `validate`
-// (schema + legality). On a thrown rejection, re-prompt INCLUDING the reason and
-// retry up to `maxAttempts`; on exhaustion fall back to `baseline()` so a flaky
-// model never stalls a turn. Every attempt is reported via `recordAttempt` for
-// the autopilot transcript surfaced in the UI.
-//
-// The catch here is legitimate control flow: catching a validation/parse
-// rejection to re-prompt, catching a TRANSPORT failure (throttle, socket reset,
-// 5xx, request timeout) to retry it the same way, falling back to baseline on
-// exhaustion, and treating a terminal no-credentials transport error as an
-// immediate baseline (re-prompting is futile — there is no model to reach). No
-// failure escapes this function: the caller always gets a decision.
 import type { ActAttempt, TextGeneration, GenerationPurpose } from "@cogweb/protocol";
 import type { OpenRouterLlmClient, LlmMessage } from "./openrouter.js";
 
@@ -21,10 +8,11 @@ import type { OpenRouterLlmClient, LlmMessage } from "./openrouter.js";
  */
 export function parseJsonAction(
   text: string,
+  allowFence = true,
 ): { kind: "parsed"; value: unknown } | { kind: "rejected"; reason: string } {
   const trimmed = text.trim();
   const fenced = trimmed.match(/^```(?:json)?\s*\r?\n?([\s\S]*?)\r?\n?\s*```$/i)?.[1];
-  const candidate = (fenced ?? trimmed).trim();
+  const candidate = allowFence && fenced !== undefined ? fenced.trim() : trimmed;
   if (!candidate) return { kind: "rejected", reason: "empty reply" };
   try {
     const value: unknown = JSON.parse(candidate);
@@ -37,8 +25,8 @@ export function parseJsonAction(
   }
 }
 
-export function extractJson(text: string): unknown {
-  const parsed = parseJsonAction(text);
+export function extractJson(text: string, allowFence = true): unknown {
+  const parsed = parseJsonAction(text, allowFence);
   if (parsed.kind === "rejected") throw new Error(parsed.reason);
   return parsed.value;
 }
@@ -60,6 +48,8 @@ export interface RobustDecideOpts<Decision> {
   recordAttempt: (attempt: ActAttempt) => void;
   /** Max model calls before failing explicitly. Defaults to 3. */
   maxAttempts?: number;
+  /** Accept a single Markdown JSON fence for policies whose action format allows it. */
+  allowJsonFence?: boolean;
   model?: string;
 }
 
@@ -117,7 +107,7 @@ export async function robustDecide<Decision>(opts: RobustDecideOpts<Decision>): 
     try {
       // Parse AND validate inside the same try: a parse failure (no JSON in the
       // reply) is a rejection to re-prompt exactly like a legality rejection.
-      const candidate = extractJson(reply.text);
+      const candidate = extractJson(reply.text, opts.allowJsonFence ?? false);
       const decision = opts.validate(candidate);
       opts.recordAttempt({
         generationId,

@@ -25,13 +25,13 @@ import express from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import type { ZodType } from "zod";
 
-import { GameRunner } from "@cogweb/core";
+import { GameRunner, PlayerFailureError } from "@cogweb/core";
 import type { GameModule, ObservedMessage, SeatPilot } from "@cogweb/core";
 import { llmUsageTotals, MessageBus } from "@cogweb/llm";
 import type { Audience, FeedEvent, ServerMessage } from "@cogweb/protocol";
 
 import { RemotePlayerPilot, type TalkDelivery } from "./remote-pilot";
-import { readConfig, writeResults, writeReplay, writeTrajectory, hasReplayUri } from "./artifacts";
+import { readConfig, writeResults, writeReplay, writeTrajectory, writePlayerFailure, hasReplayUri } from "./artifacts";
 import { PROTOCOL, type TalkLine } from "./protocol";
 
 const PLAYER_PATH = "/player";
@@ -317,9 +317,8 @@ export async function runCoworldHost<State, Decision, Results>(
         }
         if (parsed.message.type === "artifact_complete") {
           const acknowledge = pendingUploads.get(slot);
-          if (!acknowledge) throw new Error("Unexpected player artifact completion");
           pendingUploads.delete(slot);
-          acknowledge();
+          acknowledge?.();
           return;
         }
       }
@@ -371,7 +370,7 @@ export async function runCoworldHost<State, Decision, Results>(
   // Each `makeRemotePilot(slot)` binds external slot N to this bridge (role=pilot)
   // and is tracked so `close()` can tear it down; internal pilots (e.g. an
   // in-process LlmPilot) the game adds in buildPilots are left to the runner.
-  const remotePilots: RemotePlayerPilot<State, Decision>[] = [];
+  const slotByPilot = new Map<RemotePlayerPilot<State, Decision>, number>();
   const makeRemotePilot: MakeRemotePilot<State, Decision> = (slot) => {
     const pilot = new RemotePlayerPilot<State, Decision>({
       url: `${base}?role=pilot`,
@@ -385,7 +384,7 @@ export async function runCoworldHost<State, Decision, Results>(
         | ((state: unknown, seat: number) => number)
         | undefined,
     });
-    remotePilots.push(pilot);
+    slotByPilot.set(pilot, slot);
     return pilot;
   };
   const defaultBuildPilots: NonNullable<typeof opts.buildPilots> = (mk) => {
@@ -547,54 +546,14 @@ export async function runCoworldHost<State, Decision, Results>(
   const scoresFor =
     opts.scoresFor ?? ((score, n) => Array.from({ length: n }, (_, seat) => score[seat] ?? 0));
 
-  const finished = (async (): Promise<Results> => {
-    // Wait for every external player to connect before driving.
-    await Promise.race([allPlayersConnected, sleep(opts.connectDeadlineMs)]);
-    try {
-      await runner!.start();
-    } catch (err) {
-      const errorText = err instanceof Error ? err.message : String(err);
-      const scoreBySeat = opts.module.game.score(runner!.state);
-      const scores = scoresFor(scoreBySeat, slots);
-      await writeTrajectory({
-        schema_version: "1",
-        episode: {
-          schema_version: "1",
-          event_type: "episode",
-          event_id: randomUUID(),
-          recorded_at: new Date().toISOString(),
-          episode_id: episodeId,
-          seed_family: runner!.evidenceSeed,
-          ...provenance,
-          status: "failed",
-          error: errorText,
-          outcome: {
-            scores,
-            environment_decisions: environmentDecisions,
-          },
-          participant_outcomes: scores,
-        },
-        decisions,
-      });
-      throw err;
-    }
-
-    const scoreBySeat = opts.module.game.score(runner!.state);
-    const scores = scoresFor(scoreBySeat, slots);
-    const results = opts.results.build(scores, runner!.state);
-
-    // Resolve players FIRST — send `final` before writing the artifacts the hosted
-    // worker waits on. Each player emits its llm_usage log line on `final`, and
-    // the worker collects player logs + tears down pods as soon as results.json and
-    // the replay exist; writing those first would race (and usually lose) that line.
-    const finalFrame = JSON.stringify({ type: "final", scores });
+  const finalizePlayers = async (frame: string, failed: boolean) => {
     const uploads: Promise<void>[] = [];
     for (let slot = 0; slot < slots; slot++) {
       const ends = endsFor(slot);
       const player = ends.player;
       if (player?.readyState !== WebSocket.OPEN) continue;
       if (!ends.artifactCompletionExpected) {
-        player.send(finalFrame);
+        player.send(frame);
         continue;
       }
       uploads.push(
@@ -608,18 +567,80 @@ export async function runCoworldHost<State, Decision, Results>(
             player.off("close", onClose);
             pendingUploads.delete(slot);
             reject(new Error(`Player ${slot} artifact upload timed out`));
-          }, PLAYER_UPLOAD_TIMEOUT_MS);
+          }, failed ? 5_000 : PLAYER_UPLOAD_TIMEOUT_MS);
           player.once("close", onClose);
           pendingUploads.set(slot, () => {
             clearTimeout(timeout);
             player.off("close", onClose);
             resolve();
           });
-          player.send(finalFrame);
+          player.send(frame);
         }),
       );
     }
-    await Promise.all(uploads);
+    if (failed) await Promise.allSettled(uploads);
+    else await Promise.all(uploads);
+  };
+
+  const finished = (async (): Promise<Results> => {
+    await Promise.race([allPlayersConnected, sleep(opts.connectDeadlineMs)]);
+    try {
+      for (const [seat, { pilot }] of pilots) {
+        const slot = pilot instanceof RemotePlayerPilot ? slotByPilot.get(pilot) : undefined;
+        if (slot !== undefined && endsFor(slot).player?.readyState !== WebSocket.OPEN)
+          throw new PlayerFailureError(`Player slot ${slot} did not connect`, "player_error", seat);
+      }
+      await runner!.start();
+    } catch (err) {
+      const pilot = err instanceof PlayerFailureError ? pilots.get(err.seat)?.pilot : undefined;
+      const slot = pilot instanceof RemotePlayerPilot ? slotByPilot.get(pilot) : undefined;
+      // Only external policies have a platform policy index.
+      const failure = err instanceof PlayerFailureError && slot !== undefined ? {
+        message: `Player slot ${slot} ${err.kind === "episode_inconclusive" ? "inference unavailable" : "decision failed"}`,
+        kind: err.kind,
+        failed_policy_index: slot,
+      } : null;
+      if (failure) {
+        await finalizePlayers(JSON.stringify({
+          type: "episode_failed",
+          message: failure.message,
+          kind: failure.kind,
+          failedSlot: failure.failed_policy_index,
+        }), true);
+      }
+      try {
+        await writeTrajectory({
+          schema_version: "1",
+          episode: {
+            schema_version: "1",
+            event_type: "episode",
+            event_id: randomUUID(),
+            recorded_at: new Date().toISOString(),
+            episode_id: episodeId,
+            seed_family: runner!.evidenceSeed,
+            ...provenance,
+            status: "failed",
+            error: err instanceof Error ? err.message : String(err),
+            outcome: { failure, environment_decisions: environmentDecisions },
+            participant_outcomes: null,
+          },
+          decisions,
+        });
+      } finally {
+        if (failure) await writePlayerFailure(failure);
+      }
+      throw err;
+    }
+
+    const scoreBySeat = opts.module.game.score(runner!.state);
+    const scores = scoresFor(scoreBySeat, slots);
+    const results = opts.results.build(scores, runner!.state);
+
+    // Resolve players FIRST — send `final` before writing the artifacts the hosted
+    // worker waits on. Each player emits its llm_usage log line on `final`, and
+    // the worker collects player logs + tears down pods as soon as results.json and
+    // the replay exist; writing those first would race (and usually lose) that line.
+    await finalizePlayers(JSON.stringify({ type: "final", scores }), false);
 
     await writeTrajectory({
       schema_version: "1",
@@ -663,7 +684,7 @@ export async function runCoworldHost<State, Decision, Results>(
     close: async () => {
       if (closed) return;
       closed = true;
-      for (const p of remotePilots) p.close();
+      for (const p of slotByPilot.keys()) p.close();
       server.removeListener("upgrade", onUpgrade);
       for (const c of wss.clients) c.terminate();
       await new Promise<void>((res, rej) => wss.close((err) => (err ? rej(err) : res())));
@@ -802,8 +823,15 @@ export async function runCoworldGameCli<Config, Results extends { scores: number
     console.log(`[${opts.name}]   slot ${slot}: ${url}`);
   }
 
-  const results = await handle.finished;
-  console.log(`[${opts.name}] episode finished; scores=${JSON.stringify(results.scores)}`);
-  await handle.close();
-  process.exit(0);
+  try {
+    const results = await handle.finished;
+    console.log(`[${opts.name}] episode finished; scores=${JSON.stringify(results.scores)}`);
+  } catch (err) {
+    if (!(err instanceof PlayerFailureError)) throw err;
+    console.error(`[${opts.name}] episode failed (${err.kind}, seat ${err.seat})`);
+    process.exitCode = 1;
+  } finally {
+    await handle.close();
+  }
+  process.exit(process.exitCode ?? 0);
 }

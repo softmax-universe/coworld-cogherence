@@ -3,7 +3,7 @@ import { realpathSync } from "node:fs";
 import { argv } from "node:process";
 import { fileURLToPath } from "node:url";
 import { OpenRouterLlmClient, robustDecide } from "@cogweb/llm";
-import { runCoworldPlayer, type PlayerDecideContext } from "@cogweb/coworld";
+import { handlePlayerExit, runCoworldPlayer, type PlayerDecideContext } from "@cogweb/coworld";
 import { submitOrdersSchema, toOrders } from "../agents/llm/submit.js";
 import { renderSpeechMessages, normalizePosts } from "./speech.js";
 import {
@@ -20,11 +20,13 @@ export function makeLlmDecide(client = new OpenRouterLlmClient({ prefix: "COGHER
     const messages = renderPlayerMessages(ctx.view, ctx.seat, ctx.reason, "", ctx.messages, resolvePromptSelection(ctx.config));
     return robustDecide({
       client,
+      allowJsonFence: true,
       purpose: { kind: "learner" },
       signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(client.timeoutMs)]),
       slot: ctx.playerSlot,
       system: messages[0]!.content,
-      renderUser: (rejection) => messages[1]!.content + (rejection ? `\n\n${rejection}` : ""),
+      maxAttempts: 1,
+      renderUser: () => messages[1]!.content,
       validate: (candidate) => ({ orders: toOrders(submitOrdersSchema.parse(candidate)) }),
       recordAttempt: ctx.recordAttempt,
     });
@@ -37,6 +39,7 @@ export function makeLlmTalk(client = new OpenRouterLlmClient({ prefix: "COGHEREN
     const messages = renderSpeechMessages(ctx.view, ctx.seat, ctx.messages, resolvePromptSelection(ctx.config));
     const result = await robustDecide({
       client,
+      allowJsonFence: true,
       purpose: { kind: "learner" },
       signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(client.timeoutMs)]),
       slot: ctx.playerSlot,
@@ -57,4 +60,4 @@ export function run() {
     talk: makeLlmTalk(),
   });
 }
-if (realpathSync(argv[1]!) === fileURLToPath(import.meta.url)) await run();
+if (realpathSync(argv[1]!) === fileURLToPath(import.meta.url)) await run().catch(handlePlayerExit);

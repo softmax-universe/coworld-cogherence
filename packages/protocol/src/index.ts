@@ -195,10 +195,14 @@ export const TextGeneration = z.object({
 });
 export type TextGeneration = z.infer<typeof TextGeneration>;
 
+export const PlayerFailureKind = z.enum(["player_error", "episode_inconclusive"]);
+export type PlayerFailureKind = z.infer<typeof PlayerFailureKind>;
+
 export class GenerationEvidenceError extends Error {
   constructor(
     message: string,
     readonly generation: TextGeneration,
+    readonly failureKind: PlayerFailureKind = "player_error",
   ) {
     super(message);
   }

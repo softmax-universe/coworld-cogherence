@@ -4,8 +4,7 @@
 //
 // The player only ever holds its OWN redacted view (the host redacts per slot,
 // so an operative never receives the key). It therefore validates a decision
-// against the schema ONLY; the game HOST checks legality and, on rejection,
-// re-requests with a `reason` that the next observation surfaces for a retry.
+// against the schema. The host checks legality and terminates on rejection.
 
 import { OpenRouterLlmClient, robustDecide } from "@cogweb/llm";
 import type { GameModule } from "@cogweb/core";
@@ -23,7 +22,7 @@ export interface LlmCoworldPlayerOpts<State, Decision, View> {
   connect?: string;
   /** Operator guidance to fold into the prompt, per seat. */
   guidanceFor?: (seat: number) => string;
-  /** Retries per decision before falling back to the baseline. */
+  /** Model calls per decision. Defaults to one. */
   maxAttempts?: number;
 }
 
@@ -80,7 +79,7 @@ export function makeLlmCoworldDecide<State, Decision, View>(
       },
       validate: (candidate) => game.decisionSchema(state, seat).parse(candidate),
       recordAttempt,
-      maxAttempts: opts.maxAttempts,
+      maxAttempts: opts.maxAttempts ?? 1,
     });
   };
 }
