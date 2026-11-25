@@ -140,6 +140,7 @@ it("completes the real four-seat production loop with exact private attempts and
           const user = attempt.prompt[1].content;
           expect(user).toContain("Public board — tile: owner, coherence, mineral, density, reach cost:");
           expect(user).toContain("force² + listed reach cost");
+          expect(user).toContain("10 for the second, 20 for the third");
           // Check a public rival tile and a neutral tile outside the own-tile summary.
           for (const alignment of [null, `cog${(Number(decision.seat) + 1) % 4}`]) {
             const tile = nativeView.tiles.find((tile: { alignment: string | null }) => tile.alignment === alignment);
