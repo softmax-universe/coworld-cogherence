@@ -327,7 +327,7 @@ export function renderSeatView(
     for (const m of messages.slice(-12)) lines.push(messageLine(view, m));
   }
   lines.push(
-    `Total energy required = bid + ${TRANSFER_FEE} per transfer + (force² + listed reach cost) for each align + ${ALIGN_REPEAT_SURCHARGE} for each align after the first. Stay within your stored energy.`,
+    `Total energy required = bid + ${TRANSFER_FEE} per transfer + (force² + listed reach cost) for each align. Multiple aligns have an extra cost of 0 for the first, ${ALIGN_REPEAT_SURCHARGE} for the second, ${2 * ALIGN_REPEAT_SURCHARGE} for the third, and so on. Stay within your stored energy.`,
     "Return a single JSON object. Example: {} holds.",
   );
   const body = lines.join("\n");
