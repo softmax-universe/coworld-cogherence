@@ -226,11 +226,9 @@ export function buildCogherenceManifest(): CoworldManifest {
     variants,
     certification: {
       // Omits `tokens` (runner-injected); a pinned seed for a deterministic cert
-      // run, placeholder seat names, and the fixed seat count. All four seats
-      // explicitly select the offline deterministic baseline so certification
-      // never requires paid LLM calls or silent model fallbacks.
+      // run, placeholder seat names, and the fixed seat count.
       game_config: { seed: 7, players: PLACEHOLDER_PLAYERS, num_agents: SEATS },
-      players: Array.from({ length: SEATS }, () => ({ player_id: "cogherence-baseline" })),
+      players: Array.from({ length: SEATS }, (_, i) => ({ player_id: i === 0 ? "cogherence-text" : "cogherence-baseline" })),
     },
     schemaUrl: "https://raw.githubusercontent.com/Metta-AI/coworld/main/src/coworld/coworld_manifest_schema.json",
   });
