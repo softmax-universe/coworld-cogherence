@@ -32,7 +32,8 @@ import { submitOrdersSchema, toOrders } from "../agents/llm/submit.js";
 import type { TurnRecord, TurnEvent } from "../shared/engine/log.js";
 import { newGame, stepTurn, scoreGame } from "../shared/engine/game.js";
 import { resolve } from "../shared/engine/resolve.js";
-import { MAX_TURNS } from "../shared/engine/constants.js";
+import { ALIGN_REPEAT_SURCHARGE, MAX_TURNS, TRANSFER_FEE, alignEnergyCost } from "../shared/engine/constants.js";
+import { distance } from "../shared/engine/hex.js";
 import { toSnapshot, type GameSnapshot } from "../shared/snapshot.js";
 import { buildCogSnapshot, redactEventFor } from "./redact.js";
 
@@ -294,11 +295,14 @@ function renderSnapshotFor(view: CoghereView, seat: number): string {
   lines.push(
     `Your tiles (${mine.length}): ${mine.map((t) => `${t.q},${t.r}[coh${t.coherence} ${t.mineral} d${Math.floor(t.density)}]`).join(" ") || "(none)"}`,
   );
-  lines.push("Public board — tile: owner, coherence, mineral, density:");
-  for (const tile of view.tiles)
+  lines.push("Public board — tile: owner, coherence, mineral, density, reach cost:");
+  for (const tile of view.tiles) {
+    const closest = Math.min(...mine.map((own) => distance(own, tile)));
+    const reach = Number.isFinite(closest) ? alignEnergyCost(0, closest) : "unreachable";
     lines.push(
-      `  ${tile.q},${tile.r}: ${tile.alignment ?? "neutral"}, ${tile.coherence}, ${tile.mineral}, ${tile.density}`,
+      `  ${tile.q},${tile.r}: ${tile.alignment ?? "neutral"}, ${tile.coherence}, ${tile.mineral}, ${tile.density}, ${reach}`,
     );
+  }
   return lines.join("\n");
 }
 
@@ -323,7 +327,8 @@ export function renderSeatView(
     for (const m of messages.slice(-12)) lines.push(messageLine(view, m));
   }
   lines.push(
-    '\nReturn a single JSON object with your orders for this turn ({} holds). Example: {"aligns":[{"tile":"0,0","force":2}],"bid":1}',
+    `Total energy required = bid + ${TRANSFER_FEE} per transfer + (force² + listed reach cost) for each align + ${ALIGN_REPEAT_SURCHARGE} for each align after the first. Stay within your stored energy.`,
+    "Return a single JSON object. Example: {} holds.",
   );
   const body = lines.join("\n");
   return guidance ? applyGuidance(body, guidance) : body;
