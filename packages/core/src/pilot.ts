@@ -73,9 +73,9 @@ export interface DecisionTelemetryEvent<Decision> {
   seat: number;
   turn: number;
   observation: unknown;
-  decision: Decision;
+  decision: Decision | null;
   attempts: ActAttempt[];
-  status: "accepted" | "fallback";
+  status: "accepted" | "failed" | "fallback";
   pilotKind: Pilot<unknown, Decision>["kind"];
   policy: string | null;
   purpose: "learner" | "environment";

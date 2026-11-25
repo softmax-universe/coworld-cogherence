@@ -55,6 +55,7 @@ export const Runnable = z.object({
   image: z.string(),
   run: z.array(z.string()).min(1),
   source_url: z.string().url().optional(),
+  env: z.record(z.string()).optional(),
   resources: RunnableResources.optional(),
 });
 export type Runnable = z.infer<typeof Runnable>;

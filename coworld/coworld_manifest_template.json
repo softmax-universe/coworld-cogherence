@@ -8,7 +8,7 @@
   "episode_timeout_minutes": 90,
   "game": {
     "name": "cogherence",
-    "description": "A luminous hex-lattice, mixed-motive game for 3–6 LLM Cogs. Align tiles to mine C/O/Ge/S, convert balanced COGS sets to energy, talk to rivals asynchronously (public + private cheap talk, nothing binding), and win the single heart auctioned each turn by sealed second-price bid. Most hearts at the final turn wins.",
+    "description": "A luminous hex-lattice, mixed-motive game for 4 LLM Cogs. Align tiles to hold territory and mine C/O/Ge/S, spend stored energy on orders and upkeep, talk to rivals asynchronously (public + private cheap talk, nothing binding), and win the single heart auctioned each turn by sealed second-price bid. Most hearts at the final turn wins.",
     "owner": "daveey@gmail.com",
     "runnable": {
       "type": "game",
@@ -133,7 +133,7 @@
           "title": "Strategy",
           "content": {
             "type": "text",
-            "value": "- **Back your frontier.** A tile heals (+1/turn per allied neighbor) only if its upkeep is paid; isolated salients rot. Expand in connected blobs, not thin spikes.\n- **Balance the treasury.** Only full C+O+Ge+S sets convert efficiently; lopsided piles are dead weight. Trade for what you lack — but deals are non-binding, so price in betrayal.\n- **Win hearts cheaply.** The auction is second-price: bid your true value; you pay the runner-up's price. Track rivals' likely energy.\n- **Exploit is scorched earth.** A one-time windfall that permanently scars the tile and frays shared coherence. Use it to deny or to cash out a losing position, not as your main engine."
+            "value": "- **Back your frontier.** A tile heals (+1/turn per allied neighbor) only if its upkeep is paid; isolated salients rot. Expand in connected blobs, not thin spikes.\n- **Budget stored energy.** Only stored energy funds aligns, transfers, bids, and tile upkeep; abandoning a tile returns its standing coherence as next-turn energy.\n- **Win hearts cheaply.** The auction is second-price: bid your true value; you pay the runner-up's price. Track rivals' likely energy.\n- **Exploit is scorched earth.** A one-time windfall that permanently scars the tile and frays shared coherence. Use it to deny or to cash out a losing position, not as your main engine."
           }
         }
       ]
@@ -151,6 +151,22 @@
       "id": "cogherence-baseline",
       "name": "Cogherence Baseline",
       "description": "Deterministic no-LLM baseline: every turn it holds (no orders, no bid). Always-legal, so it certifies the contract offline."
+    },
+    {
+      "type": "player",
+      "image": "{{GAME_IMAGE}}",
+      "run": [
+        "node",
+        "dist-server/game/llm-player.js"
+      ],
+      "source_url": "https://github.com/Metta-AI/coworld-cogherence/tree/main",
+      "env": {
+        "COWORLD_LLM_ENABLED": "true",
+        "COWORLD_LLM_MODEL": "anthropic/claude-haiku-4.5"
+      },
+      "id": "cogherence-text",
+      "name": "cogherence Text Model",
+      "description": "Play with the selected language model."
     }
   ],
   "commissioner": [],
@@ -203,7 +219,7 @@
     },
     "players": [
       {
-        "player_id": "cogherence-baseline"
+        "player_id": "cogherence-text"
       },
       {
         "player_id": "cogherence-baseline"

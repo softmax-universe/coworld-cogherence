@@ -131,9 +131,9 @@ export class RemotePlayerPilot<State, Decision> implements Pilot<State, Decision
     if (this.#clockMs !== null && this.#creditFor) {
       this.#bankMs += Math.max(0, this.#creditFor(ctx.state, ctx.seat));
     }
-    // Chess clock spent: don't contact the policy at all — play a random legal
-    // move for it (no round trip) until the increment refunds it.
-    if (this.#clockMs !== null && this.#bankMs <= 0) return this.#playRandom(ctx);
+    if (this.#clockMs !== null && this.#bankMs <= 0) {
+      throw new Error(`remote player slot ${this.#slot} chess clock expired`);
+    }
 
     const ws = await this.#ensureConnected(ctx.signal);
     ctx.signal.throwIfAborted();
@@ -169,11 +169,10 @@ export class RemotePlayerPilot<State, Decision> implements Pilot<State, Decision
               : this.#actTimeoutMs;
           raw = await this.#request(ws, obs, waitMs, ctx.signal);
         } catch (err) {
-          // The bank ran out waiting for this reply: switch to random for the rest of
-          // the game (this is the chess clock expiring, not an unresponsive socket).
-          if (this.#clockMs !== null && remainingBank() <= 0) return this.#playRandom(ctx);
-          // Otherwise a reply timeout / socket drop: count it toward the breaker, then
-          // let the runner fall back to the baseline for this decision.
+          if (this.#clockMs !== null && remainingBank() <= 0) {
+            throw new Error(`remote player slot ${this.#slot} chess clock expired`);
+          }
+          // Reply timeout / socket drop: count it toward the breaker and surface the error.
           if (++this.#consecutiveTimeouts >= GIVE_UP_AFTER_TIMEOUTS) this.#unresponsive = true;
           throw err;
         }
@@ -184,7 +183,7 @@ export class RemotePlayerPilot<State, Decision> implements Pilot<State, Decision
         this.#consecutiveTimeouts = 0; // a live reply means the player is alive
         const response = raw.type === "reply" ? JSON.stringify(raw.decision) : "";
         if (raw.type === "failure") {
-          ctx.recordSpeech(raw.speechAttempts, [], true, {
+          ctx.recordSpeech(raw.speechAttempts, null, true, {
             phase: "talk",
             view,
             inbox: obs.messages,
@@ -231,24 +230,6 @@ export class RemotePlayerPilot<State, Decision> implements Pilot<State, Decision
       if (this.#clockMs !== null)
         this.#bankMs = Math.max(0, this.#bankMs - (Date.now() - startedAt));
     }
-  }
-
-  /** Play the chess-clock "out of time" move for the seat: the game's
-   *  `randomDecision` (a uniformly-random legal move) when it defines one, else its
-   *  always-legal `baselineDecision`. `ctx.validate` (schema + dry-run apply)
-   *  re-asserts legality; both seam moves are legal by contract, so this does not
-   *  throw in practice. */
-  #playRandom(ctx: DecideContext<State, Decision>): Decision {
-    ctx.markFallback();
-    const out = ctx.game.randomDecision ?? ctx.game.baselineDecision;
-    const candidate = out(ctx.state, ctx.seat);
-    const decision = ctx.validate(candidate);
-    ctx.recordAttempt({
-      prompt: "",
-      response: JSON.stringify(candidate),
-      error: "chess clock expired; playing fallback move",
-    });
-    return decision;
   }
 
   /** Open the socket once and reuse it across turns. */
@@ -354,14 +335,20 @@ export class RemotePlayerPilot<State, Decision> implements Pilot<State, Decision
     if (msg.type !== "artifact_complete" && this.#pending && msg.id === this.#pending.id) {
       if (msg.type === "reply" && !this.#pending.signal.aborted && msg.messages.length > 0) {
         const delivery = this.#onTalk(this.#cur.seat, this.#cur.turn, msg.messages);
-        if (delivery.kind === "accepted") msg.messages = delivery.messages;
-        else {
-          msg.messages = [];
-          msg.speechUsedFallback = true;
-          msg.speechAttempts = (msg.speechAttempts ?? []).map((attempt) => ({
-            ...attempt,
-            error: attempt.error ?? delivery.reason,
-          }));
+        if (delivery.kind === "accepted") {
+          msg.messages = delivery.messages;
+        } else {
+          this.#pending.resolve({
+            type: "failure",
+            id: msg.id,
+            error: delivery.reason,
+            attempts: msg.attempts ?? [],
+            speechAttempts: (msg.speechAttempts ?? []).map((attempt) => ({
+              ...attempt,
+              error: attempt.error ?? delivery.reason,
+            })),
+          });
+          return;
         }
       }
       this.#pending.resolve(msg);

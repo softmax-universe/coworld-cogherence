@@ -120,6 +120,16 @@ const players: PlayerRunnable[] = [
     description:
       "Deterministic no-LLM baseline: every turn it holds (no orders, no bid). Always-legal, so it certifies the contract offline.",
   },
+  {
+    type: "player",
+    id: "cogherence-text",
+    name: "cogherence Text Model",
+    image: GAME_IMAGE,
+    run: ["node", "dist-server/game/llm-player.js"],
+    source_url: SOURCE_TREE,
+    description: "Play with the selected language model.",
+    env: { COWORLD_LLM_ENABLED: "true", COWORLD_LLM_MODEL: "anthropic/claude-haiku-4.5" },
+  },
 ];
 
 // Placeholder seat names for offline configs (variants, the cert fixture); the
@@ -148,8 +158,8 @@ export function buildCogherenceManifest(): CoworldManifest {
   return buildManifest({
     id: cogherenceGame.id,
     description:
-      "A luminous hex-lattice, mixed-motive game for 3–6 LLM Cogs. Align tiles to mine C/O/Ge/S, convert " +
-      "balanced COGS sets to energy, talk to rivals asynchronously (public + private cheap talk, nothing " +
+      "A luminous hex-lattice, mixed-motive game for 4 LLM Cogs. Align tiles to hold territory and mine C/O/Ge/S, " +
+      "spend stored energy on orders and upkeep, talk to rivals asynchronously (public + private cheap talk, nothing " +
       "binding), and win the single heart auctioned each turn by sealed second-price bid. Most hearts at the " +
       "final turn wins.",
     owner: "daveey@gmail.com",
@@ -204,8 +214,8 @@ export function buildCogherenceManifest(): CoworldManifest {
           value:
             "- **Back your frontier.** A tile heals (+1/turn per allied neighbor) only if its upkeep is paid; " +
             "isolated salients rot. Expand in connected blobs, not thin spikes.\n" +
-            "- **Balance the treasury.** Only full C+O+Ge+S sets convert efficiently; lopsided piles are dead " +
-            "weight. Trade for what you lack — but deals are non-binding, so price in betrayal.\n" +
+            "- **Budget stored energy.** Only stored energy funds aligns, transfers, bids, and tile upkeep; " +
+            "abandoning a tile returns its standing coherence as next-turn energy.\n" +
             "- **Win hearts cheaply.** The auction is second-price: bid your true value; you pay the runner-up's " +
             "price. Track rivals' likely energy.\n" +
             "- **Exploit is scorched earth.** A one-time windfall that permanently scars the tile and frays " +
@@ -218,7 +228,7 @@ export function buildCogherenceManifest(): CoworldManifest {
       // Omits `tokens` (runner-injected); a pinned seed for a deterministic cert
       // run, placeholder seat names, and the fixed seat count.
       game_config: { seed: 7, players: PLACEHOLDER_PLAYERS, num_agents: SEATS },
-      players: Array.from({ length: SEATS }, () => ({ player_id: "cogherence-baseline" })),
+      players: Array.from({ length: SEATS }, (_, i) => ({ player_id: i === 0 ? "cogherence-text" : "cogherence-baseline" })),
     },
     schemaUrl: "https://raw.githubusercontent.com/Metta-AI/coworld/main/src/coworld/coworld_manifest_schema.json",
   });

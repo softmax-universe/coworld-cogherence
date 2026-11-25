@@ -485,12 +485,12 @@ export async function runCoworldHost<State, Decision, Results>(
         executed_action: event.decision,
         terminal: opts.module.game.isFinished(runner!.state),
         action_status: event.status,
-        fallback_origin: event.status === "fallback" ? "game.baselineDecision" : null,
+        fallback_origin: null,
       });
     },
 
     stepDelayMs: opts.runner?.stepDelayMs,
-    autoAdvance: opts.runner?.autoAdvance,
+    autoAdvance: opts.runner?.autoAdvance ?? { enabled: false, maxTimeMs: 0 },
     // Coworld episodes must be deterministic + reproducible, so any free-form timed
     // phase (Game.openPhase, e.g. werecog's discussion window) collapses to an
     // instant here — its wall-clock would break replay/eval parity.
@@ -548,10 +548,36 @@ export async function runCoworldHost<State, Decision, Results>(
     opts.scoresFor ?? ((score, n) => Array.from({ length: n }, (_, seat) => score[seat] ?? 0));
 
   const finished = (async (): Promise<Results> => {
-    // Wait for every external player to connect before driving; a straggler past
-    // the deadline is left to the baseline fallback so it can't stall the host.
+    // Wait for every external player to connect before driving.
     await Promise.race([allPlayersConnected, sleep(opts.connectDeadlineMs)]);
-    await runner!.start();
+    try {
+      await runner!.start();
+    } catch (err) {
+      const errorText = err instanceof Error ? err.message : String(err);
+      const scoreBySeat = opts.module.game.score(runner!.state);
+      const scores = scoresFor(scoreBySeat, slots);
+      await writeTrajectory({
+        schema_version: "1",
+        episode: {
+          schema_version: "1",
+          event_type: "episode",
+          event_id: randomUUID(),
+          recorded_at: new Date().toISOString(),
+          episode_id: episodeId,
+          seed_family: runner!.evidenceSeed,
+          ...provenance,
+          status: "failed",
+          error: errorText,
+          outcome: {
+            scores,
+            environment_decisions: environmentDecisions,
+          },
+          participant_outcomes: scores,
+        },
+        decisions,
+      });
+      throw err;
+    }
 
     const scoreBySeat = opts.module.game.score(runner!.state);
     const scores = scoresFor(scoreBySeat, slots);
@@ -629,11 +655,14 @@ export async function runCoworldHost<State, Decision, Results>(
     return results;
   })();
 
+  let closed = false;
   return {
     url: `http://${publicHost}:${port}`,
     playerUrls,
     finished,
     close: async () => {
+      if (closed) return;
+      closed = true;
       for (const p of remotePilots) p.close();
       server.removeListener("upgrade", onUpgrade);
       for (const c of wss.clients) c.terminate();

@@ -617,19 +617,19 @@ export class GameRunner<State, Decision> {
       this.#emit({ type: "status", status: this.status() });
 
       let decision: Decision;
+      let failure: Error | null = null;
       try {
-        // Race the pilot against the auto-advance countdown. A pilot throw/reject is
-        // folded into the result (not a race rejection) so it's handled the same as a
-        // timeout: fall back to an always-legal baseline so the game never stalls.
+        // Race the pilot against the auto-advance countdown. A pilot throw/reject or
+        // deadline expiration ends with an explicit failure — never synthesizing a
+        // baseline action — while preserving all recorded attempts/raw evidence.
         const decided = seatPilot.pilot.decide(ctx).then(
           (d) => ({ ok: true as const, d }),
           (e) => ({ ok: false as const, e }),
         );
         const outcome = await Promise.race([decided, advanceGate]);
         if (outcome === "advance") {
-          // The clock won: abandon the seat's in-flight decision and play baseline.
-          usedFallback = true;
-          controller.abort(new Error("Decision deadline expired"));
+          const timeoutErr = new Error("Decision deadline expired");
+          controller.abort(timeoutErr);
           seatPilot.pilot.abort?.(seat);
           const joinTimer: { id: ReturnType<typeof setTimeout> | null } = { id: null };
           await Promise.race([
@@ -639,7 +639,13 @@ export class GameRunner<State, Decision> {
             }),
           ]);
           if (joinTimer.id !== null) clearTimeout(joinTimer.id);
-          decision = this.#game.baselineDecision(stateAtTurn, seat);
+          if (attempts.length === 0) {
+            attempts.push({ prompt: "", response: "", error: timeoutErr.message });
+          } else {
+            const last = attempts[attempts.length - 1]!;
+            if (last.error === null) last.error = timeoutErr.message;
+          }
+          failure = timeoutErr;
         } else if (outcome.ok) {
           decision = outcome.d;
         } else if (gen === this.#generation && this.#pilots.get(seat) !== seatPilot) {
@@ -648,9 +654,14 @@ export class GameRunner<State, Decision> {
           // this iteration's gate/thinking before the loop restarts.
           continue;
         } else {
-          usedFallback = true;
-          attempts.push({ prompt: "", response: "", error: errorMessage(outcome.e) });
-          decision = this.#game.baselineDecision(stateAtTurn, seat);
+          const err = outcome.e instanceof Error ? outcome.e : new Error(errorMessage(outcome.e));
+          if (attempts.length === 0) {
+            attempts.push({ prompt: "", response: "", error: err.message });
+          } else {
+            const last = attempts[attempts.length - 1]!;
+            if (last.error === null) last.error = err.message;
+          }
+          failure = err;
         }
       } finally {
         sealed = true;
@@ -663,6 +674,21 @@ export class GameRunner<State, Decision> {
 
       if (gen !== this.#generation) return;
 
+      if (failure !== null) {
+        this.#onDecision?.({
+          seat,
+          turn: this.#game.turnOf(stateAtTurn),
+          observation: this.#game.redact(stateAtTurn, seat),
+          decision: null,
+          attempts,
+          status: "failed",
+          purpose: seatPilot.purpose,
+          pilotKind: seatPilot.pilot.kind,
+          policy: seatPilot.name || seatPilot.model,
+        });
+        throw failure;
+      }
+
       // Emit the autopilot transcript for piloted seats (model present) so the UI
       // can show what the model saw and decided.
       {
@@ -674,15 +700,15 @@ export class GameRunner<State, Decision> {
           usedFallback,
           model: seatPilot.model,
         };
-        this.#emit({ type: "actPrompt", actPrompt: publicPrompt(wire, decision) });
+        this.#emit({ type: "actPrompt", actPrompt: publicPrompt(wire, decision!) });
       }
 
-      this.#apply(seat, decision);
+      this.#apply(seat, decision!);
       this.#onDecision?.({
         seat,
         turn: this.#game.turnOf(stateAtTurn),
         observation: this.#game.redact(stateAtTurn, seat),
-        decision,
+        decision: decision!,
         attempts,
         status: usedFallback ? "fallback" : "accepted",
         purpose: seatPilot.purpose,
@@ -758,9 +784,9 @@ export class GameRunner<State, Decision> {
           seat,
           turn: game.turnOf(state),
           observation,
-          decision: { messages: executed },
+          decision: failed ? null : { messages: executed },
           attempts: speechAttempts,
-          status: failed ? "fallback" : "accepted",
+          status: failed ? "failed" : "accepted",
           purpose: seatPilot.purpose,
           pilotKind: seatPilot.pilot.kind,
           policy: seatPilot.name || seatPilot.model,

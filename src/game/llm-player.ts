@@ -4,10 +4,10 @@ import { argv } from "node:process";
 import { fileURLToPath } from "node:url";
 import { OpenRouterLlmClient, robustDecide } from "@cogweb/llm";
 import { runCoworldPlayer, type PlayerDecideContext } from "@cogweb/coworld";
+import { submitOrdersSchema, toOrders } from "../agents/llm/submit.js";
 import { renderSpeechMessages, normalizePosts } from "./speech.js";
 import {
   cogherenceModule,
-  cogherenceGame,
   renderPlayerMessages,
   type CoghereSeamState,
   type CoghereDecision,
@@ -17,7 +17,6 @@ import {
 type Context = PlayerDecideContext<CoghereSeamState, CoghereDecision, CoghereView>;
 export function makeLlmDecide(client = new OpenRouterLlmClient({ prefix: "COGHERENCE" })) {
   return (ctx: Context) => {
-    const state = ctx.view as unknown as CoghereSeamState;
     const messages = renderPlayerMessages(ctx.view, ctx.seat, ctx.reason, "", ctx.messages, resolvePromptSelection(ctx.config));
     return robustDecide({
       client,
@@ -26,10 +25,8 @@ export function makeLlmDecide(client = new OpenRouterLlmClient({ prefix: "COGHER
       slot: ctx.playerSlot,
       system: messages[0]!.content,
       renderUser: (rejection) => messages[1]!.content + (rejection ? `\n\n${rejection}` : ""),
-      validate: (candidate) => cogherenceGame.decisionSchema(state, ctx.seat).parse(candidate),
-      baseline: () => cogherenceGame.baselineDecision(state, ctx.seat),
+      validate: (candidate) => ({ orders: toOrders(submitOrdersSchema.parse(candidate)) }),
       recordAttempt: ctx.recordAttempt,
-      markFallback: ctx.markFallback,
     });
   };
 }
@@ -37,7 +34,6 @@ export function makeLlmTalk(client = new OpenRouterLlmClient({ prefix: "COGHEREN
   const talkedThrough = new Map<number, number>();
   return async (ctx: Context) => {
     if ((talkedThrough.get(ctx.seat) ?? -1) >= ctx.turn) return [];
-    talkedThrough.set(ctx.seat, ctx.turn);
     const messages = renderSpeechMessages(ctx.view, ctx.seat, ctx.messages, resolvePromptSelection(ctx.config));
     const result = await robustDecide({
       client,
@@ -47,11 +43,10 @@ export function makeLlmTalk(client = new OpenRouterLlmClient({ prefix: "COGHEREN
       system: messages[0]!.content,
       renderUser: () => messages[1]!.content,
       validate: (candidate) => ({ messages: normalizePosts(candidate, ctx.view, ctx.seat) }),
-      baseline: () => ({ messages: [] }),
       recordAttempt: ctx.recordAttempt,
-      markFallback: ctx.markFallback,
       maxAttempts: 1,
     });
+    talkedThrough.set(ctx.seat, ctx.turn);
     return result.messages;
   };
 }

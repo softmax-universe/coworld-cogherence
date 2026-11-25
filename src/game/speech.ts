@@ -36,7 +36,7 @@ export const renderTalk = (
     .map((c) => c.id)
     .join(", ");
   lines.push(
-    `\nSend public messages (to "public") or private DMs (to a cog id like "${others.split(", ")[0] ?? "cog1"}") to form alliances, propose mineral trades, bluff, or threaten — nothing is binding, and you can betray later. Others: ${others}. Return JSON with your messages (empty list to stay silent). One or two sentences each.`,
+    `\nSend public messages (to "public") or private DMs (to a cog id like "${others.split(", ")[0] ?? "cog1"}") to form alliances, propose mineral trades, bluff, or threaten — nothing is binding, and you can betray later. Others: ${others}. Return a single JSON object with up to 2 messages (empty list to stay silent). One or two sentences each. Example: {"messages":[{"to":"public","text":"Open to trading C for O."}]} or {"messages":[]}`,
   );
   return lines.join("\n");
 };
@@ -47,7 +47,7 @@ export function renderSpeechMessages(view: CoghereView, seat: number, messages: 
       role: "system" as const,
       content:
         renderSystemPrompt(selection) +
-        `\nReturn JSON matching this schema: ${JSON.stringify(SEND_MESSAGES_FORMAT.inputSchema)}`,
+        `\nReturn only a JSON object matching this schema: ${JSON.stringify(SEND_MESSAGES_FORMAT.inputSchema)}`,
     },
     { role: "user" as const, content: renderTalk(view, seat, messages) },
   ];
@@ -68,14 +68,11 @@ export function speechSchema(view: CoghereView, seat: number) {
   });
 }
 export function normalizePosts(input: unknown, view: CoghereView, seat: number): TalkLine[] {
-  return (speechSchema(view, seat).parse(input).messages ?? [])
-    .slice(0, 2)
-    .filter((post) => post.text.trim())
-    .map((post) => {
-      const recipient =
-        post.to === "public" ? null : view.cogs.find((cog) => cog.id === post.to)!.index;
-      return { text: post.text.trim(), to: recipient };
-    });
+  return (speechSchema(view, seat).parse(input).messages ?? []).map((post) => {
+    const recipient =
+      post.to === "public" ? null : view.cogs.find((cog) => cog.id === post.to)!.index;
+    return { text: post.text.trim(), to: recipient };
+  });
 }
 export function parseSpeechResponse(response: string, view: CoghereView, seat: number): TalkLine[] {
   return normalizePosts(extractJson(response), view, seat);
