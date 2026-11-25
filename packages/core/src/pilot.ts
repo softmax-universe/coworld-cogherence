@@ -4,8 +4,15 @@
 // human over the websocket (@cogweb/core). The runner is generic over all of
 // them and centralizes validate-then-apply-or-fallback.
 
-import type { ActAttempt, FeedEvent } from "@cogweb/protocol";
+import type { ActAttempt, FeedEvent, PlayerFailureKind } from "@cogweb/protocol";
 import type { Game } from "./game";
+
+export class PlayerFailureError extends Error {
+  constructor(message: string, readonly kind: PlayerFailureKind, readonly seat: number) {
+    super(message);
+    this.name = "PlayerFailureError";
+  }
+}
 
 /** Replace request-local evidence without sharing mutable transport objects. */
 export function recordAttemptSnapshot(attempts: ActAttempt[], attempt: ActAttempt): void {

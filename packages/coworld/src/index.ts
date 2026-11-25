@@ -27,6 +27,7 @@ export {
   WelcomeMessage,
   ObservationMessage,
   FinalMessage,
+  EpisodeFailedMessage,
   ReplyMessage,
   InboxMessage,
   TalkLine,
@@ -39,7 +40,7 @@ export { RemotePlayerPilot } from "./remote-pilot";
 export type { RemotePlayerPilotOpts } from "./remote-pilot";
 
 // The player side: run a slot policy against the game's /player server.
-export { runCoworldPlayer } from "./player-runtime";
+export { handlePlayerExit, runCoworldPlayer } from "./player-runtime";
 export type { RunCoworldPlayerOpts, PlayerDecideContext } from "./player-runtime";
 
 // The standard LLM coworld player: a Bedrock policy driven by the game's
@@ -51,6 +52,10 @@ export type { LlmCoworldPlayerOpts } from "./llm-player";
 export {
   readConfig,
   writeResults,
+  writePlayerFailure,
+  GamePlayerFailureSchema,
+  type GamePlayerFailure,
+  PLAYER_FAILURE_URI_ENV,
   writeReplay,
   hasReplayUri,
   CONFIG_URI_ENV,

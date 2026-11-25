@@ -13,7 +13,7 @@ import { realpathSync } from "node:fs";
 import { argv } from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { runCoworldPlayer } from "@cogweb/coworld";
+import { handlePlayerExit, runCoworldPlayer } from "@cogweb/coworld";
 import type { PlayerDecideContext } from "@cogweb/coworld";
 
 import { cogherenceModule } from "./game.js";
@@ -39,5 +39,5 @@ export function run(): Promise<number[]> {
 // Run only when invoked as the entrypoint (`npx tsx src/game/baseline-player.ts`),
 // not when imported (e.g. by tests reusing `decide`).
 if (realpathSync(argv[1]!) === fileURLToPath(import.meta.url)) {
-  await run();
+  await run().catch(handlePlayerExit);
 }

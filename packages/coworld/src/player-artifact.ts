@@ -13,7 +13,7 @@ export async function writePlayerTraceArtifact(
   uri: string,
   slot: number,
   records: PlayerTraceRecord[],
-  scores: number[],
+  scores: number[] | null,
 ): Promise<void> {
   const archive = new JSZip();
   archive.file("trace.jsonl", records.map((record) => JSON.stringify(record)).join("\n") + "\n");

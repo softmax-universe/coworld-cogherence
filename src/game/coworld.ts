@@ -192,7 +192,7 @@ export function buildCogherenceManifest(): CoworldManifest {
           "`observation` return a `reply` whose `decision` is `{ orders: [...] }` — an Order is one of " +
           "`{type:'align',tile,force}`, `{type:'exploit',tile}`, `{type:'abandon',tile}`, " +
           "`{type:'transfer',to,mineral,amount}`, `{type:'bid',energy}`; an empty list holds. The host " +
-          "validates legality and, on rejection, re-requests with a `reason`. On `final` the episode is over.",
+          "validates each reply once. A rejected decision ends play with `episode_failed`. A completed episode ends with `final` and per-slot scores.",
       },
       global: {
         type: "text",

@@ -95,9 +95,10 @@ it.each([0, 99, 1])(
         expect(replay).not.toContain("private intent");
         expect(replay).not.toContain("private prompt");
       } else {
+        const settled = Promise.allSettled(players);
         await expect(host.finished).rejects.toThrow("Private recipient must be another external player slot");
         await host.close();
-        await Promise.allSettled(players);
+        await settled;
         const trajectory = JSON.parse(await readFile(join(directory, "trajectory.jsonl"), "utf8"));
         expect(trajectory.episode.game).toBe("registered-countdown-private");
         expect(trajectory.episode.status).toBe("failed");

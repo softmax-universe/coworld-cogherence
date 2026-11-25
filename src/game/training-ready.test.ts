@@ -42,15 +42,11 @@ it("completes the real four-seat production loop with exact private attempts and
               { to: `cog${(Number(slot) + 1) % 4}`, text: `private talk ${slot}` },
             ],
           })
-        : slot === "0" && seen === 0
-          ? '{"orders":"invalid"}'
-          : slot === "1" && seen === 0
-            ? '{"bid":999999}'
-            : slot === "3" && seen === 0
-              ? JSON.stringify({
-                  abandons: [request.messages[1].content.match(/Your tiles[^\n]*?(-?\d+,-?\d+)\[/)[1]],
-                })
-              : "{}";
+        : slot === "3" && seen === 0
+          ? JSON.stringify({
+              abandons: [request.messages[1].content.match(/Your tiles[^\n]*?(-?\d+,-?\d+)\[/)[1]],
+            })
+          : "{}";
       const response = {
         model: "fixture/cogherence",
         choices: [{ message: { content: text }, finish_reason: "stop" }],
@@ -94,7 +90,7 @@ it("completes the real four-seat production loop with exact private attempts and
       seed_family: "7",
     });
     expect(trajectory.decisions).toHaveLength(800);
-    expect(calls).toHaveLength(802);
+    expect(calls).toHaveLength(800);
     const byId = new Map(calls.map((call) => [call.id, call]));
     // Use the public subprocess protocol with the same dispatched roster labels.
     // Default-only names would silently change observations and native prompts.
@@ -117,7 +113,7 @@ it("completes the real four-seat production loop with exact private attempts and
     for (const decision of trajectory.decisions) {
       expect(decision.visibility).toBe("private");
       expect(decision.action_status).toBe("accepted");
-      expect(decision.attempts).toHaveLength([1, 3].includes(decision.decision_index) ? 2 : 1);
+      expect(decision.attempts).toHaveLength(1);
       for (const attempt of decision.attempts) {
         expect(attempt.inference_mode).toBe("text_action");
         expect(attempt.request).toEqual(byId.get(attempt.platform_call_id)!.request);

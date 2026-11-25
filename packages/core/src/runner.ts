@@ -20,6 +20,7 @@ import { GameError } from "./game";
 import type { Game, GameModule, ApplyResult } from "./game";
 import {
   recordAttemptSnapshot,
+  PlayerFailureError,
   type Pilot,
   type DecideContext,
   type DecisionTelemetryEvent,
@@ -686,7 +687,8 @@ export class GameRunner<State, Decision> {
           pilotKind: seatPilot.pilot.kind,
           policy: seatPilot.name || seatPilot.model,
         });
-        throw failure;
+        if (failure instanceof PlayerFailureError) throw failure;
+        throw new PlayerFailureError(failure.message, "player_error", seat);
       }
 
       // Emit the autopilot transcript for piloted seats (model present) so the UI

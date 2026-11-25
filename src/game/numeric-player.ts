@@ -1,7 +1,7 @@
 import { argv } from "node:process";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { runCoworldPlayer, type PlayerDecideContext } from "@cogweb/coworld";
+import { handlePlayerExit, runCoworldPlayer, type PlayerDecideContext } from "@cogweb/coworld";
 
 import { candidates } from "./choices.js";
 import { cogherenceModule, type CoghereDecision, type CoghereSeamState, type CoghereView } from "./game.js";
@@ -45,5 +45,5 @@ export function numericDecide(url: string, session: string) {
 if (argv[1] === fileURLToPath(import.meta.url)) {
   const url = z.string().url().parse(process.env.PLAYER_NUMERIC_URL);
   const session = z.string().min(1).max(128).parse(process.env.PLAYER_POLICY_SESSION);
-  await runCoworldPlayer({ module: cogherenceModule, decide: numericDecide(url, session) });
+  await runCoworldPlayer({ module: cogherenceModule, decide: numericDecide(url, session) }).catch(handlePlayerExit);
 }

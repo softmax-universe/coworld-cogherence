@@ -37,7 +37,7 @@ names, in seat order, when replaying or training against a hosted scenario. The
 public training bridge preserves those labels in private views and prompts.
 Omitting it retains the historical `Cog 1` through `Cog 4` defaults. The complete
 native-loop system test checks a custom roster through the actual subprocess
-reset/step protocol, including every negotiation/orders request and retry.
+reset/step protocol, including every negotiation and orders request.
 
 The orders renderer includes the entire public board: coordinates, owner,
 coherence, mineral and density. These are already present in the native redacted
@@ -119,8 +119,11 @@ python3 scripts/test_prompt_games.py dist-server/game/training-bridge.js \
 ```
 
 The existing production-loop test uses the real host, four players, and a local
-HTTP provider. It checks captured attempts, a rejected response and retry,
-bridge/native message parity, private recipients, and public replay redaction.
+HTTP provider. It checks one attempt per decision, bridge/native message parity, private
+recipients, and public replay redaction. Hosted failure tests cover malformed
+orders, unaffordable bids, and inference outages. The host writes the typed
+declaration to `COGAME_PLAYER_FAILURE_URI` and the detailed rejection to the
+private trajectory.
 Keep this production check alongside the complete-game wording workflow.
 Neither test measures learned play quality.
 

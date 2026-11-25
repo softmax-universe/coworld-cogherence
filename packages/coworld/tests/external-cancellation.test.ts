@@ -80,9 +80,10 @@ it("cancels the external native request, retains its evidence, and fails explici
           recordAttempt: ctx.recordAttempt,
         }),
     });
+    const settled = Promise.allSettled([player]);
     await expect(host.finished).rejects.toThrow("Decision deadline expired");
     await host.close();
-    await player.catch(() => {});
+    await settled;
     const trajectory = JSON.parse(await readFile(join(dir, "trajectory.json"), "utf8"));
     const records = trajectory.decisions;
     expect(trajectory.episode).toMatchObject({ status: "failed", error: "Decision deadline expired" });

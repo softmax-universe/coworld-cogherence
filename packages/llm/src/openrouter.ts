@@ -222,8 +222,11 @@ export class OpenRouterLlmClient {
       req.recordGeneration(generation);
       if (!response.ok)
         throw new GenerationEvidenceError(
-          `Text completion failed (${response.status}): ${rawBody}`,
+          `Text completion failed (${response.status})`,
           generation,
+          response.status === 408 || response.status === 429 || response.status >= 500
+            ? "episode_inconclusive"
+            : "player_error",
         );
       const rawResponse: unknown = JSON.parse(rawBody);
       const output = CompletionResponse.parse(rawResponse);
@@ -259,6 +262,12 @@ export class OpenRouterLlmClient {
         platformCallId: generation.platformCallId ?? null,
         providerRequestId: response.headers.get("x-request-id"),
       };
+    } catch (err) {
+      if (err instanceof GenerationEvidenceError || (req.signal.aborted && req.signal.reason?.name !== "TimeoutError"))
+        throw err;
+      throw new GenerationEvidenceError(
+        err instanceof Error ? err.message : String(err), generation, "episode_inconclusive",
+      );
     } finally {
       generation.latencyMs = performance.now() - startedAt;
       req.recordGeneration(generation);
