@@ -12,32 +12,29 @@
 // immediate baseline (re-prompting is futile — there is no model to reach). No
 // failure escapes this function: the caller always gets a decision.
 import type { ActAttempt, TextGeneration, GenerationPurpose } from "@cogweb/protocol";
-import { isCredentialsUnavailable } from "./openrouter.js";
 import type { OpenRouterLlmClient, LlmMessage } from "./openrouter.js";
 
 /**
- * Pull the first JSON object out of a model reply (handles ```json fences and
- * surrounding prose). Throws if none parses — that throw is caught by the loop
- * and re-prompted like any other rejection.
+ * Parse a JSON object from a model reply. Accepts bare JSON or a single
+ * standard outer Markdown JSON fence (` ```json ... ``` ` / ` ``` ... ``` `).
+ * Rejects surrounding prose or non-object JSON values.
  */
 export function parseJsonAction(
   text: string,
 ): { kind: "parsed"; value: unknown } | { kind: "rejected"; reason: string } {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
-  const braced = (() => {
-    const start = text.indexOf("{");
-    const end = text.lastIndexOf("}");
-    return start >= 0 && end > start ? text.slice(start, end + 1) : undefined;
-  })();
-  for (const candidate of [fenced, braced, text]) {
-    if (!candidate) continue;
-    try {
-      return { kind: "parsed", value: JSON.parse(candidate) };
-    } catch {
-      // try the next candidate; if all fail we throw below.
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*\r?\n?([\s\S]*?)\r?\n?\s*```$/i)?.[1];
+  const candidate = (fenced ?? trimmed).trim();
+  if (!candidate) return { kind: "rejected", reason: "empty reply" };
+  try {
+    const value: unknown = JSON.parse(candidate);
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      return { kind: "rejected", reason: "reply must be a JSON object" };
     }
+    return { kind: "parsed", value };
+  } catch {
+    return { kind: "rejected", reason: "reply is not a valid JSON object" };
   }
-  return { kind: "rejected", reason: "no JSON object in reply" };
 }
 
 export function extractJson(text: string): unknown {
@@ -59,18 +56,14 @@ export interface RobustDecideOpts<Decision> {
   /** Validate a candidate (schema + legality); returns the typed decision, or
    *  THROWS a human-readable reason suitable for re-prompting. */
   validate: (candidate: unknown) => Decision;
-  /** An always-legal decision used when every attempt is exhausted. */
-  baseline: () => Decision;
   /** Record one attempt (prompt, response, rejection-or-null) for the transcript. */
   recordAttempt: (attempt: ActAttempt) => void;
-  /** Max model calls before falling back. Defaults to 3. */
+  /** Max model calls before failing explicitly. Defaults to 3. */
   maxAttempts?: number;
-  /** Mark a returned baseline as unsupervised fallback. */
-  markFallback: () => void;
   model?: string;
 }
 
-/** Run the retry-then-fallback loop and return a validated decision. */
+/** Run the retry loop and return a validated decision, or throw explicitly on failure. */
 export async function robustDecide<Decision>(opts: RobustDecideOpts<Decision>): Promise<Decision> {
   const maxAttempts = Math.max(1, opts.maxAttempts ?? 3);
   let rejection: string | null = null;
@@ -105,24 +98,7 @@ export async function robustDecide<Decision>(opts: RobustDecideOpts<Decision>): 
         },
       });
     } catch (err) {
-      // No credentials (offline cert): terminal and unrecoverable — retrying just
-      // re-fails. Record it and play baseline now so the turn resolves instantly.
-      if (isCredentialsUnavailable(err)) {
-        opts.recordAttempt({
-          generationId,
-          purpose: opts.purpose,
-          prompt,
-          response: generation?.response ?? "",
-          error: err instanceof Error ? err.message : String(err),
-          generation,
-          platformCallId: generation?.platformCallId ?? null,
-          providerRequestId: generation?.providerRequestId ?? null,
-        });
-        opts.markFallback();
-        return opts.baseline();
-      }
-      // Preserve Cogherence's terminal transport-failure boundary. The player
-      // runtime sends the retained evidence to the host before its fallback.
+      // Preserve transport/credential failure evidence and surface the error explicitly.
       opts.recordAttempt({
         generationId,
         purpose: opts.purpose,
@@ -170,6 +146,5 @@ export async function robustDecide<Decision>(opts: RobustDecideOpts<Decision>): 
     }
   }
 
-  opts.markFallback();
-  return opts.baseline();
+  throw new Error(`Model decision failed after ${maxAttempts} attempt(s): ${rejection}`);
 }

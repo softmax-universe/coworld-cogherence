@@ -72,30 +72,43 @@ it.each([0, 99, 1])(
           },
         }),
       );
-      await Promise.all([host.finished, ...players]);
-      const trajectory = JSON.parse(await readFile(join(directory, "trajectory.jsonl"), "utf8"));
-      const replay = await readFile(join(directory, "replay.json"), "utf8");
-      expect(trajectory.episode.game).toBe("registered-countdown-private");
-      expect(
-        trajectory.decisions.every(
-          (decision: { game: string }) => decision.game === "registered-countdown-private",
-        ),
-      ).toBe(true);
-      const speech = trajectory.decisions.find(
-        (decision: { executed_action: { kind?: string }; seat: string }) =>
-          "messages" in decision.executed_action && decision.seat === "0",
-      );
-      expect(speech).toBeDefined();
-      if (recipient === 1)
+      if (recipient === 1) {
+        await Promise.all([host.finished, ...players]);
+        const trajectory = JSON.parse(await readFile(join(directory, "trajectory.jsonl"), "utf8"));
+        const replay = await readFile(join(directory, "replay.json"), "utf8");
+        expect(trajectory.episode.game).toBe("registered-countdown-private");
+        expect(
+          trajectory.decisions.every(
+            (decision: { game: string }) => decision.game === "registered-countdown-private",
+          ),
+        ).toBe(true);
+        const speech = trajectory.decisions.find(
+          (decision: { executed_action: { messages?: unknown } | null; seat: string }) =>
+            decision.executed_action !== null &&
+            "messages" in decision.executed_action &&
+            decision.seat === "0",
+        );
         expect(speech).toMatchObject({
           action_status: "accepted",
           executed_action: { messages: [{ to: 1, text: "private intent" }] },
         });
-      else
+        expect(replay).not.toContain("private intent");
+        expect(replay).not.toContain("private prompt");
+      } else {
+        await expect(host.finished).rejects.toThrow("Private recipient must be another external player slot");
+        await host.close();
+        await Promise.allSettled(players);
+        const trajectory = JSON.parse(await readFile(join(directory, "trajectory.jsonl"), "utf8"));
+        expect(trajectory.episode.game).toBe("registered-countdown-private");
+        expect(trajectory.episode.status).toBe("failed");
+        const speech = trajectory.decisions.find(
+          (decision: { observation: { phase?: string }; seat: string }) =>
+            decision.observation?.phase === "talk" && decision.seat === "0",
+        );
         expect(speech).toMatchObject({
-          action_status: "fallback",
+          action_status: "failed",
           selected_attempt_id: null,
-          executed_action: { messages: [] },
+          executed_action: null,
           attempts: [
             {
               accepted: false,
@@ -103,8 +116,7 @@ it.each([0, 99, 1])(
             },
           ],
         });
-      expect(replay).not.toContain("private intent");
-      expect(replay).not.toContain("private prompt");
+      }
     } finally {
       await host.close();
     }

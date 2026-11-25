@@ -16,6 +16,7 @@ import {
 } from "./game.js";
 import { renderSpeechMessages, normalizePosts, speechSchema } from "./speech.js";
 import { SEND_MESSAGES_FORMAT } from "../agents/llm/negotiate.js";
+import { submitOrdersSchema, toOrders } from "../agents/llm/submit.js";
 import { resolve } from "../shared/engine/resolve.js";
 
 /** Direct language actions use exactly the ordinary native player's messages. */
@@ -24,8 +25,6 @@ export class TrainingSession {
   private decisionId = 0;
   private reason: string | null = null;
   private parseReason: string | null = null;
-  private localAttempts = 0;
-  private hostAttempts = 0;
   private readonly bus = new MessageBus<ObservedMessage>();
   private phase: "talk" | "orders" = "talk";
   private heldInbox: ObservedMessage[] | null = null;
@@ -76,53 +75,48 @@ export class TrainingSession {
   step(decisionId: number, response: string) {
     const observation = this.observation();
     if (observation.kind !== "decision" || decisionId !== this.decisionId)
-      return { kind: "rejected" as const, reason: "stale decision", observation };
+      return { kind: "rejected" as const, reason: "stale decision", raw_response: response, observation };
     if (this.phase === "talk") {
       const json = parseJsonAction(response);
-      if (json.kind === "rejected") return this.speech([], json.reason);
+      if (json.kind === "rejected")
+        return { kind: "rejected" as const, reason: json.reason, raw_response: response, observation };
       const parsed = speechSchema(observation.semantic_view, observation.seat).safeParse(
         json.value,
       );
-      if (!parsed.success) return this.speech([], parsed.error.message);
+      if (!parsed.success)
+        return { kind: "rejected" as const, reason: parsed.error.message, raw_response: response, observation };
       return this.speech(
         normalizePosts(parsed.data, observation.semantic_view, observation.seat),
-        null,
       );
     }
-    this.localAttempts++;
     const json = parseJsonAction(response);
-    if (json.kind === "rejected") return this.rejectParse(json.reason);
-    const parsed = cogherenceGame
-      .decisionSchema(this.state, observation.seat)
-      .safeParse(json.value);
-    if (!parsed.success) return this.rejectParse(parsed.error.message);
-    this.localAttempts = 0;
+    if (json.kind === "rejected") return this.rejectParse(json.reason, response);
+    const parsed = submitOrdersSchema.safeParse(json.value);
+    if (!parsed.success) return this.rejectParse(parsed.error.message, response);
+    const decision = { orders: toOrders(parsed.data) };
     this.parseReason = null;
     this.flushSpeech();
     const id = this.state.engine.cogOrder[observation.seat]!;
-    const probe = resolve(structuredClone(this.state.engine), { [id]: parsed.data.orders });
+    const probe = resolve(structuredClone(this.state.engine), { [id]: decision.orders });
     const rejected = probe.events.find((event) => event.type === "rejected" && event.cog === id);
     this.reason = rejected?.type === "rejected" ? rejected.reason : null;
     if (this.reason !== null) {
-      this.hostAttempts++;
-      if (this.hostAttempts >= 3)
-        return this.apply(
-          cogherenceGame.baselineDecision(this.state, observation.seat),
-          this.reason,
-        );
       this.heldInbox = this.bus.visibleTo(observation.seat);
-      return { kind: "rejected" as const, reason: this.reason, observation: this.observation() };
+      return {
+        kind: "rejected" as const,
+        reason: this.reason,
+        raw_response: response,
+        observation: this.observation(),
+      };
     }
-    return this.apply(parsed.data, null);
+    return this.apply(decision);
   }
-  private speech(messages: TalkLine[], reason: string | null) {
+  private speech(messages: TalkLine[]) {
     this.pendingSpeech = messages;
     this.phase = "orders";
     this.decisionId++;
     const action = { messages };
-    return reason === null
-      ? { kind: "accepted" as const, action, observation: this.observation() }
-      : { kind: "consumed_rejection" as const, reason, action, observation: this.observation() };
+    return { kind: "accepted" as const, action, observation: this.observation() };
   }
   private flushSpeech() {
     if (this.pendingSpeech === null) return;
@@ -137,32 +131,25 @@ export class TrainingSession {
     this.pendingSpeech = null;
   }
 
-  private rejectParse(reason: string) {
+  private rejectParse(reason: string, response: string) {
     this.parseReason = reason;
-    if (this.localAttempts < 3)
-      return { kind: "rejected" as const, reason, observation: this.observation() };
-    return this.apply(
-      cogherenceGame.baselineDecision(this.state, cogherenceGame.pendingActors(this.state)[0]!),
+    return {
+      kind: "rejected" as const,
       reason,
-    );
+      raw_response: response,
+      observation: this.observation(),
+    };
   }
-  private apply(
-    action: { orders: import("../shared/engine/orders.js").Order[] },
-    reason: string | null,
-  ) {
+  private apply(action: { orders: import("../shared/engine/orders.js").Order[] }) {
     const seat = cogherenceGame.pendingActors(this.state)[0]!;
     this.flushSpeech();
     this.state = cogherenceGame.applyDecision(this.state, seat, action).state;
     this.decisionId++;
     this.phase = "talk";
     this.heldInbox = null;
-    this.localAttempts = 0;
-    this.hostAttempts = 0;
     this.reason = null;
     this.parseReason = null;
-    return reason === null
-      ? { kind: "accepted" as const, action, observation: this.observation() }
-      : { kind: "consumed_rejection" as const, reason, action, observation: this.observation() };
+    return { kind: "accepted" as const, action, observation: this.observation() };
   }
 }
 const Command = z.discriminatedUnion("kind", [

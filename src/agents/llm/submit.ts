@@ -81,7 +81,7 @@ export const SUBMIT_ORDERS_FORMAT = {
         type: "integer",
         minimum: 0,
         description:
-          "Sealed second-price heart bid, in energy (reserve price 1e — hearts are never free, and you must hold at least one tile to buy; tied bids go to whoever committed first). 0 = no bid.",
+          "Sealed second-price heart bid, in energy (reserve price 1e — hearts are never free, and you must hold at least one tile to buy; tied bids go to the earlier seat in the fixed Cog order). 0 = no bid.",
       },
     },
     additionalProperties: false,
@@ -100,9 +100,7 @@ export function toOrders(p: SubmitOrders): Order[] {
   return orders;
 }
 
-/** Parse raw tool input into Order[]; returns [] (no orders, bid 0) on malformed input. */
+/** Parse raw tool input into Order[]; throws on malformed input. */
 export function parseSubmit(input: unknown): Order[] {
-  const r = submitOrdersSchema.safeParse(input);
-  if (!r.success) return [];
-  return toOrders(r.data);
+  return toOrders(submitOrdersSchema.parse(input));
 }

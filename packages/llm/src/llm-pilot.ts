@@ -68,9 +68,7 @@ export class LlmPilot<State, Decision> implements Pilot<State, Decision> {
           return `${base}\n\nYour previous reply was rejected: ${rejection}\nFix it and answer again.`;
         },
         validate: ctx.validate,
-        baseline: () => game.baselineDecision(state, seat),
         recordAttempt: ctx.recordAttempt,
-        markFallback: ctx.markFallback,
       });
     } finally {
       if (this.#controllers.get(seat) === controller) this.#controllers.delete(seat);

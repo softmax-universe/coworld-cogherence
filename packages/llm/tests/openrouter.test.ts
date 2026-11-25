@@ -79,7 +79,6 @@ describe("native direct text action", () => {
           }),
         );
       const attempts: ActAttempt[] = [];
-      const markFallback = vi.fn();
       await expect(
         robustDecide({
           purpose: { kind: "learner" },
@@ -88,13 +87,10 @@ describe("native direct text action", () => {
           system: ping.system,
           renderUser: () => ping.messages[0]!.text,
           validate: () => ({ take: 2 }),
-          baseline: () => ({ take: 0 }),
           recordAttempt: (a) => recordAttemptSnapshot(attempts, a),
-          markFallback,
           maxAttempts: 1,
         }),
       ).rejects.toThrow();
-      expect(markFallback).not.toHaveBeenCalled();
       expect(attempts).toHaveLength(1);
       expect(attempts[0]!.generation!.request).toMatchObject({
         messages: [
@@ -120,7 +116,6 @@ describe("native direct text action", () => {
       )
       .mockResolvedValueOnce(new Response(JSON.stringify(response)));
     const attempts: ActAttempt[] = [];
-    const markFallback = vi.fn();
     const result = await robustDecide({
       purpose: { kind: "learner" },
       signal: AbortSignal.timeout(30_000),
@@ -132,15 +127,12 @@ describe("native direct text action", () => {
         if (parsed.take < 0) throw new Error("illegal take");
         return parsed;
       },
-      baseline: () => ({ take: 0 }),
       recordAttempt: (a) => recordAttemptSnapshot(attempts, a),
-      markFallback,
       maxAttempts: 2,
     });
     expect(result).toEqual({ take: 2 });
     expect(attempts.map((a) => a.error)).toEqual(["illegal take", null]);
     expect(attempts[1]!.generation!.messages[1]!.content).toBe("view\nillegal take");
     expect(attempts[1]!.parsedAction).toEqual(result);
-    expect(markFallback).not.toHaveBeenCalled();
   });
 });

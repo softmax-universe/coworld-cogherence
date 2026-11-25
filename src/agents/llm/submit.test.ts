@@ -22,10 +22,10 @@ describe("submit_orders", () => {
     expect(parseSubmit({})).toEqual([]);
   });
 
-  it("returns [] on malformed input (fail-safe)", () => {
-    expect(parseSubmit({ aligns: [{ tile: "0,0", force: -1 }] })).toEqual([]);
-    expect(parseSubmit("garbage")).toEqual([]);
-    expect(parseSubmit(null)).toEqual([]);
+  it("throws on malformed input (no silent fallback)", () => {
+    expect(() => parseSubmit({ aligns: [{ tile: "0,0", force: -1 }] })).toThrow();
+    expect(() => parseSubmit("garbage")).toThrow();
+    expect(() => parseSubmit(null)).toThrow();
   });
 
   it("exposes a JSON-Schema tool definition", () => {

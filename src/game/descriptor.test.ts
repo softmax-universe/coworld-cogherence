@@ -60,7 +60,7 @@ describe("cogherence descriptor + autopilot on the seam", () => {
       guidance: "play aggressively",
       messages: [],
     });
-    expect(obs).toContain("Return JSON");
+    expect(obs).toContain("Return a single JSON object");
     expect(obs.toLowerCase()).toContain("aggressively");
   });
 

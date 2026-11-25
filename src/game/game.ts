@@ -322,7 +322,9 @@ export function renderSeatView(
     lines.push("Messages you can see:");
     for (const m of messages.slice(-12)) lines.push(messageLine(view, m));
   }
-  lines.push("\nReturn JSON with your orders for this turn (an empty list holds).");
+  lines.push(
+    '\nReturn a single JSON object with your orders for this turn ({} holds). Example: {"aligns":[{"tile":"0,0","force":2}],"bid":1}',
+  );
   const body = lines.join("\n");
   return guidance ? applyGuidance(body, guidance) : body;
 }

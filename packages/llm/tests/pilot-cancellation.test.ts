@@ -81,14 +81,16 @@ it("joins a deadline-aborted native body and freezes its started request and rec
       },
     },
   );
-  const done = runner.start();
+  const done = runner.start().catch((error: unknown) => error);
   await vi.advanceTimersByTimeAsync(10);
-  await done;
+  const error = await done;
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toBe("Decision deadline expired");
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(records).toHaveLength(1);
   expect(records[0]).toMatchObject({
-    status: "fallback",
-    decision: { move: "baseline" },
+    status: "failed",
+    decision: null,
     attempts: [
       expect.objectContaining({
         platformCallId: "a2ce1fb3-dc06-4733-8df4-cc271161e014",
@@ -149,17 +151,19 @@ it("bounds a non-cooperative pilot and rejects late mutation of sealed evidence"
     onDecision: (record) => records.push(record),
   });
   try {
-    const done = runner.start();
+    const done = runner.start().catch((error: unknown) => error);
     await vi.advanceTimersByTimeAsync(20);
-    await done;
+    const error = await done;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe("Decision deadline expired");
     generation.response = "mutated transport object";
     expect(lateWrite).toThrow("Decision evidence is sealed");
     settle({ move: "late" });
     await Promise.resolve();
     expect(records).toMatchObject([
       {
-        status: "fallback",
-        decision: { move: "baseline" },
+        status: "failed",
+        decision: null,
         attempts: [{ response: "started", generation: { response: "started" } }],
       },
     ]);

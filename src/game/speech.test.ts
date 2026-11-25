@@ -31,17 +31,16 @@ it("only explicitly public posts broadcast; valid private posts keep their recip
     );
 });
 it.each(["unknown", "self"])(
-  "consumes %s private-recipient rejection as silence through the ordinary training bridge",
+  "rejects %s private-recipient without synthesizing silence through the ordinary training bridge",
   (recipient) => {
     const bridge = new TrainingSession("recipient", 4);
     const observation = bridge.observation();
     if (observation.kind !== "decision") throw new Error("Expected speech decision");
     const to =
       recipient === "self" ? observation.semantic_view.cogs[observation.seat]!.id : "unknown-cog";
-    const result = bridge.step(
-      observation.decision_id,
-      JSON.stringify({ messages: [{ to, text: "private intent" }] }),
-    );
-    expect(result).toMatchObject({ kind: "consumed_rejection", action: { messages: [] } });
+    const raw = JSON.stringify({ messages: [{ to, text: "private intent" }] });
+    const result = bridge.step(observation.decision_id, raw);
+    expect(result).toMatchObject({ kind: "rejected", raw_response: raw });
+    expect(result.observation).toMatchObject({ decision_id: observation.decision_id });
   },
 );

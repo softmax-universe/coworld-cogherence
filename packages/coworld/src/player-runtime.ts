@@ -90,6 +90,13 @@ export function runCoworldPlayer<State, Decision, View>(
     const artifactUri = process.env.COWORLD_PLAYER_ARTIFACT_UPLOAD_URL;
 
     ws.on("error", reject);
+    ws.on("close", () => {
+      if (!finishing) {
+        const err = new Error("Game host closed connection before final");
+        episodeController.abort(err);
+        reject(err);
+      }
+    });
     ws.on("message", (data: Buffer) => {
       const msg = parseGameToPlayer(JSON.parse(data.toString()));
       switch (msg.type) {

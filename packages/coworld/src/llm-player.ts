@@ -46,7 +46,6 @@ export function makeLlmCoworldDecide<State, Decision, View>(
     messages,
     timeLeftMs,
     recordAttempt,
-    markFallback,
   }) => {
     // The redacted view IS this player's working state: the autopilot, schema,
     // and baseline read only view-available fields. (Legality needs the full
@@ -80,9 +79,7 @@ export function makeLlmCoworldDecide<State, Decision, View>(
         return observation + clock + hostReason + parseReason;
       },
       validate: (candidate) => game.decisionSchema(state, seat).parse(candidate),
-      baseline: () => game.baselineDecision(state, seat),
       recordAttempt,
-      markFallback,
       maxAttempts: opts.maxAttempts,
     });
   };
